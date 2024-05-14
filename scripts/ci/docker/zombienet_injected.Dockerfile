@@ -9,7 +9,7 @@ LABEL io.parity.image.authors="devops-team@parity.io" \
     io.parity.image.created="${BUILD_DATE}"
 
 RUN apt-get update && \
-    apt-get install -y curl gnupg lsb-release jq tini vim && \
+    apt-get install -y curl gnupg lsb-release jq tini vim procps build-essential && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -18,7 +18,7 @@ RUN apt-get update && \
 WORKDIR /home/nonroot/
 ENV CLOUDSDK_INSTALL_DIR /usr/local/gcloud
 RUN curl -sSL https://sdk.cloud.google.com | bash
-ENV PATH $PATH:/usr/local/gcloud/google-cloud-sdk/bin
+ENV PATH $PATH:/usr/local/gcloud/google-cloud-sdk/bin:/root/.cargo/bin
 RUN gcloud components install kubectl
 
 # Non-root user for security purposes.
@@ -58,6 +58,14 @@ RUN chown -R nonroot. /etc/zombie-net
 
 # Use the non-root user to run our application
 USER nonroot
+
+# install rust
+ENV RUST_VERSION=1.75.0
+RUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain $RUST_VERSION -y
+ENV PATH $PATH:/home/nonroot/.cargo/bin
+# install nextest
+RUN cargo install cargo-nextest --locked 
+
 # Tini allows us to avoid several Docker edge cases, see https://github.com/krallin/tini.
 ENTRYPOINT ["tini", "--", "bash"]
 

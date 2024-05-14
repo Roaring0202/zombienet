@@ -16,7 +16,6 @@ import {
   DEFAULT_COLLATOR_IMAGE,
   DEFAULT_COMMAND,
   DEFAULT_CUMULUS_COLLATOR_BIN,
-  DEFAULT_GENESIS_GENERATE_SUBCOMMAND,
   DEFAULT_GLOBAL_TIMEOUT,
   DEFAULT_IMAGE,
   DEFAULT_KEYSTORE_KEY_TYPES,
@@ -154,6 +153,7 @@ export async function generateNetworkSpec(
   networkSpec.settings = {
     timeout: DEFAULT_GLOBAL_TIMEOUT,
     enable_tracing: true,
+    node_verifier: "Metric",
     ...(config.settings ? config.settings : {}),
   };
 
@@ -205,7 +205,9 @@ export async function generateNetworkSpec(
   for (const nodeGroup of config.relaychain.node_groups || []) {
     for (let i = 0; i < (nodeGroup.count as number); i++) {
       const node: NodeConfig = {
-        name: `${nodeGroup.name}-${i}`,
+        // Replace whitespaces with dashes for node names
+        // see https://github.com/paritytech/zombienet/issues/1659
+        name: `${nodeGroup.name.replaceAll(" ", "-")}-${i}`,
         image: nodeGroup.image || networkSpec.relaychain.defaultImage,
         command: nodeGroup.command,
         args: sanitizeArgs(nodeGroup.args || []),
@@ -289,7 +291,9 @@ export async function generateNetworkSpec(
       for (const collatorGroup of parachain.collator_groups || []) {
         for (let i = 0; i < (collatorGroup.count as number); i++) {
           const node: NodeConfig = {
-            name: `${collatorGroup.name}-${i}`,
+            // Replace whitespaces with dashes for node names
+            // see https://github.com/paritytech/zombienet/issues/1659
+            name: `${collatorGroup.name.replaceAll(" ", "-")}-${i}`,
             image: collatorGroup.image || DEFAULT_COLLATOR_IMAGE,
             command: collatorGroup.command || DEFAULT_CUMULUS_COLLATOR_BIN,
             args: sanitizeArgs(collatorGroup.args || [], { "listen-addr": 2 }),
@@ -353,9 +357,10 @@ export async function generateNetworkSpec(
           computedStatePath = genesisStatePath;
         }
       } else {
+        // NOTE: the subcommand to execute will be set later based on `substrateCliArgsVersion`.
         computedStateCommand = parachain.genesis_state_generator
           ? parachain.genesis_state_generator
-          : `${collatorBinary} ${DEFAULT_GENESIS_GENERATE_SUBCOMMAND}`;
+          : `${collatorBinary} {{GENESIS_GENERATE_SUBCOMMAND}}`;
 
         // TODO: we should remove this conditional ones
         // https://github.com/paritytech/polkadot-sdk/pull/2375 and
@@ -502,6 +507,10 @@ interface UsedNames {
 const mUsedNames: UsedNames = {};
 
 export function getUniqueName(name: string): string {
+  // Transform whitespaces to dashes in name, since
+  // whitespaces in names are not supported
+  // see https://github.com/paritytech/zombienet/issues/1659
+  name = name.replaceAll(" ", "-");
   let uniqueName;
   if (!mUsedNames[name]) {
     mUsedNames[name] = 1;

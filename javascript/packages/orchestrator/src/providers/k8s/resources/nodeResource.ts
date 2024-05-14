@@ -23,9 +23,11 @@ export class NodeResource {
     protected readonly nodeSetupConfig: Node,
   ) {}
 
-  public async generateSpec() {
-    const volumes = await this.generateVolumes();
-    const volumeMounts = this.generateVolumesMounts();
+  public async generateSpec(inCI: boolean = false) {
+    // DEBUG LOCAL
+    inCI = true;
+    const volumes = await this.generateVolumes(inCI);
+    const volumeMounts = this.generateVolumesMounts(inCI);
     const containersPorts = await this.generateContainersPorts();
     const initContainers = this.generateInitContainers();
     const containers = await this.generateContainers(
@@ -33,23 +35,39 @@ export class NodeResource {
       containersPorts,
     );
 
-    return this.generatePodSpec(initContainers, containers, volumes);
+    return this.generatePodSpec(initContainers, containers, volumes, inCI);
   }
 
-  private async generateVolumes(): Promise<Volume[]> {
-    return [
+  private async generateVolumes(inCI: boolean): Promise<Volume[]> {
+    const volumes: Volume[] = [
       { name: "tmp-cfg" },
       { name: "tmp-data" },
       { name: "tmp-relay-data" },
     ];
+
+    if (inCI)
+      volumes.push({
+        name: "pods",
+        hostPath: { path: "/var/log/pods", type: "" },
+      });
+
+    return volumes;
   }
 
-  private generateVolumesMounts() {
-    return [
+  private generateVolumesMounts(inCI: boolean) {
+    const volMount = [
       { name: "tmp-cfg", mountPath: "/cfg", readOnly: false },
       { name: "tmp-data", mountPath: "/data", readOnly: false },
       { name: "tmp-relay-data", mountPath: "/relay-data", readOnly: false },
     ];
+
+    if (inCI)
+      volMount.push({
+        name: "pods",
+        mountPath: "/var/log/pods",
+        readOnly: true /* set to false for debugging */,
+      });
+    return volMount;
   }
 
   private async generateContainersPorts(): Promise<ContainerPort[]> {
@@ -73,7 +91,8 @@ export class NodeResource {
     return [
       {
         name: TRANSFER_CONTAINER_NAME,
-        image: "docker.io/alpine",
+        image:
+          "europe-west3-docker.pkg.dev/parity-zombienet/zombienet-public-images/alpine:latest",
         imagePullPolicy: "Always",
         volumeMounts: [
           { name: "tmp-cfg", mountPath: "/cfg", readOnly: false },
@@ -84,17 +103,10 @@ export class NodeResource {
           "ash",
           "-c",
           [
-            "wget github.com/moparisthebest/static-curl/releases/download/v7.83.1/curl-amd64 -O /cfg/curl",
-            "echo downloaded",
+            "cp /tmp/curl /cfg/curl",
             "chmod +x /cfg/curl",
-            "echo chmoded",
-            "wget github.com/uutils/coreutils/releases/download/0.0.17/coreutils-0.0.17-x86_64-unknown-linux-musl.tar.gz -O /cfg/coreutils-0.0.17-x86_64-unknown-linux-musl.tar.gz",
-            "cd /cfg",
-            "tar -xvzf ./coreutils-0.0.17-x86_64-unknown-linux-musl.tar.gz",
-            "cp ./coreutils-0.0.17-x86_64-unknown-linux-musl/coreutils /cfg/coreutils",
+            "cp /tmp/coreutils /cfg/coreutils",
             "chmod +x /cfg/coreutils",
-            "rm -rf ./coreutils-0.0.17-x86_64-unknown-linux-musl",
-            "echo coreutils downloaded",
             `until [ -f ${FINISH_MAGIC_FILE} ]; do echo ${TRANSFER_CONTAINER_WAIT_LOG}; sleep 1; done; echo copy files has finished`,
           ].join(" && "),
         ],
@@ -174,6 +186,7 @@ export class NodeResource {
     initContainers: Container[],
     containers: Container[],
     volumes: Volume[],
+    inCI: boolean = false,
   ): PodSpec {
     const { name, zombieRole } = this.nodeSetupConfig;
     const zombieRoleLabel = this.computeZombieRoleLabel();
@@ -203,7 +216,7 @@ export class NodeResource {
         restartPolicy,
         volumes,
         securityContext: {
-          fsGroup: 1000,
+          fsGroup: inCI ? 0 : 1000,
           runAsUser: 1000,
           runAsGroup: 1000,
         },

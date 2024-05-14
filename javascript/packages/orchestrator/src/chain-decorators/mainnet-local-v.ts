@@ -58,10 +58,7 @@ export async function addCollatorSelection(specPath: string, node: Node) {
 
     const { eth_account } = node.accounts;
 
-    if (runtimeConfig.collatorSelection)
-      runtimeConfig.collatorSelection.invulnerables.push(eth_account.address);
-    if (runtimeConfig.collatorStaking)
-      runtimeConfig.collatorStaking.invulnerables.push(eth_account.address);
+    runtimeConfig.collatorSelection.invulnerables.push(eth_account.address);
 
     new CreateLogTable({
       colWidths: [30, 20, 70],

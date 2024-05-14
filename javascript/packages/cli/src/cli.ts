@@ -6,6 +6,7 @@ import { convert } from "./actions/convert";
 import { setup } from "./actions/setup";
 import { spawn } from "./actions/spawn";
 import { test } from "./actions/test";
+import { checkNodeVersion } from "./versionCheck";
 
 const debug = require("debug")("zombie-cli");
 
@@ -17,6 +18,8 @@ let alreadyTryToStop = false;
 const setGlobalNetwork = (globalNetwork: Network) => {
   network = globalNetwork;
 };
+
+checkNodeVersion();
 
 async function handleTermination(userInterrupted = false) {
   process.env.terminating = "1";
@@ -155,6 +158,35 @@ program
     console.log(p.version);
     process.exit(0);
   });
+
+program.addHelpText(
+  "after",
+  `
+
+Debug:
+  The debug/verbose output is managed by the DEBUG environment variable, you can enable/disable specific debugging namespaces setting an space or comma-delimited names.
+  $ e.g $ DEBUG=zombie, zombie::paras zombienet spawn example/0001-example.toml
+
+  The available namespaces are:
+  zombie
+  zombie::chain
+  zombie::cmdGenerator
+  zombie::config
+  zombie::helper
+  zombie::js
+  zombie::kube
+  zombie::metrics
+  zombie::native
+  zombie::network
+  zombie::paras
+  zombie::podman
+  zombie::spawner
+  zombie::substrateCliArgsVersion
+  zombie::test
+
+  NOTE: wildcard (e.g.'zombie*') are supported, for advance use check https://www.npmjs.com/package/debug#wildcards
+`,
+);
 
 program.parse(process.argv);
 

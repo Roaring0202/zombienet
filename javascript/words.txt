@@ -11,6 +11,7 @@ availables
 aventus
 backchannel
 baltathar
+bcsv
 bitnami
 blockhash
 blockheight
@@ -55,9 +56,12 @@ ferdie
 fileserver
 finalised
 framesystem
+ftsv
 fullpaths
 genshiro
 gurke
+gzipped
+Gzipped
 hasher
 hashers
 hostpath
@@ -136,8 +140,11 @@ prevotes
 procps
 propery
 protobuf
+PUSHGATEWAY
+pushgateway
 rawdata
 rawmetric
+readgzipped
 relaychain
 resourse
 runtimes
@@ -149,6 +156,7 @@ shiden
 sibl
 simnet
 smoldot
+Srvc
 stakers
 startoflabelname
 statemigration
@@ -177,6 +185,7 @@ willbe
 xcmp
 xinfra
 xzvf
+zcat
 zipkin
 zndsl
 zombienet
