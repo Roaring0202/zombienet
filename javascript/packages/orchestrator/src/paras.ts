@@ -1,410 +1,260 @@
-import { decorators, getRandomPort } from "@zombienet/utils";
-import fs from "fs";
-import chainSpecFns, { isRawSpec } from "./chainSpec";
-import { getUniqueName } from "./configGenerator";
-import {
-  DEFAULT_COLLATOR_IMAGE,
-  DEFAULT_GENESIS_GENERATE_SUBCOMMAND,
-  DEFAULT_GENESIS_HEAD_GENERATE_SUBCOMMAND,
-  GENESIS_STATE_FILENAME,
-  GENESIS_WASM_FILENAME,
-  K8S_WAIT_UNTIL_SCRIPT_SUFIX,
-  NODE_CONTAINER_WAIT_LOG,
-  WAIT_UNTIL_SCRIPT_SUFIX,
-} from "./constants";
-import { decorate } from "./chain-decorators";
-import { Providers } from "./providers";
-import { Client, getClient } from "./providers/client";
-import { fileMap } from "./types";
-import { Node, ZombieRole, Parachain } from "./sharedTypes";
-import { KubeClient } from "./providers/k8s/kubeClient";
+{self, ...}: {
+  perSystem = {
+    config,
+    self',
+    inputs',
+    pkgs,
+    system,
+    ...
+  }: let
+    # this change on each change of dependencies, unfortunately this hash not yet automatically updated from SRI of package.lock
 
-const debug = require("debug")("zombie::paras");
+    ####
 
-export async function generateParachainFiles(
-  namespace: string,
-  tmpDir: string,
-  parachainFilesPath: string,
-  relayChainName: string,
-  parachain: Parachain,
-  relayChainSpecIsRaw: boolean,
-): Promise<void> {
-  const [
-    addAuraAuthority,
-    addAuthority,
-    changeGenesisConfig,
-    clearAuthorities,
-    readAndParseChainSpec,
-    specHaveSessionsKeys,
-    getNodeKey,
-    addParaCustom,
-    addCollatorSelection,
-    writeChainSpec,
-  ] = decorate(parachain.para, [
-    chainSpecFns.addAuraAuthority,
-    chainSpecFns.addAuthority,
-    chainSpecFns.changeGenesisConfig,
-    chainSpecFns.clearAuthorities,
-    chainSpecFns.readAndParseChainSpec,
-    chainSpecFns.specHaveSessionsKeys,
-    chainSpecFns.getNodeKey,
-    chainSpecFns.addParaCustom,
-    chainSpecFns.addCollatorSelection,
-    chainSpecFns.writeChainSpec,
-  ]);
-  const GENESIS_STATE_FILENAME_WITH_ID = `${GENESIS_STATE_FILENAME}-${parachain.id}`;
-  const GENESIS_WASM_FILENAME_WITH_ID = `${GENESIS_WASM_FILENAME}-${parachain.id}`;
-
-  const stateLocalFilePath = `${parachainFilesPath}/${GENESIS_STATE_FILENAME}`;
-  const wasmLocalFilePath = `${parachainFilesPath}/${GENESIS_WASM_FILENAME}`;
-  const client = getClient();
-
-  const { setupChainSpec, getChainSpecRaw } = Providers.get(
-    client.providerName,
-  );
-
-  let chainSpecFullPath;
-  const chainName = `${parachain.chain ? parachain.chain + "-" : ""}${
-    parachain.name
-  }-${relayChainName}`;
-  const chainSpecFileName = `${chainName}.json`;
-
-  const chainSpecFullPathPlain = `${tmpDir}/${chainName}-plain.json`;
-
-  if (parachain.cumulusBased) {
-    // need to create the parachain spec
-    // file name template is [para chain-]<para name>-<relay chain>
-    const relayChainSpecFullPathPlain = `${tmpDir}/${relayChainName}-plain.json`;
-
-    // Check if the chain-spec file is provided.
-    if (parachain.chainSpecPath) {
-      debug("parachain chain spec provided");
-      await fs.promises.copyFile(
-        parachain.chainSpecPath,
-        chainSpecFullPathPlain,
-      );
-    } else {
-      debug("creating chain spec plain");
-      // create or copy chain spec
-      await setupChainSpec(
-        namespace,
-        {
-          chainSpecPath: parachain.chainSpecPath,
-          chainSpecCommand: parachain.chainSpecCommand!,
-          defaultImage: parachain.collators[0].image,
-        },
-        parachain.chain,
-        chainSpecFullPathPlain,
-      );
-    }
-
-    chainSpecFullPath = `${tmpDir}/${chainSpecFileName}`;
-    if (!(await isRawSpec(chainSpecFullPathPlain))) {
-      // fields
-      const plainData = readAndParseChainSpec(chainSpecFullPathPlain);
-      const relayChainSpec = readAndParseChainSpec(relayChainSpecFullPathPlain);
-      if (plainData.para_id) plainData.para_id = parachain.id;
-      if (plainData.paraId) plainData.paraId = parachain.id;
-      if (plainData.relay_chain) plainData.relay_chain = relayChainSpec.id;
-      if (plainData.genesis.runtime?.parachainInfo?.parachainId)
-        plainData.genesis.runtime.parachainInfo.parachainId = parachain.id;
-      else if (
-        plainData.genesis.runtimeGenesis?.patch?.parachainInfo?.parachainId
-      )
-        plainData.genesis.runtimeGenesis.patch.parachainInfo.parachainId =
-          parachain.id;
-      else if (
-        plainData.genesis.runtimeGenesis?.config?.parachainInfo?.parachainId
-      )
-        plainData.genesis.runtimeGenesis.config.parachainInfo.parachainId =
-          parachain.id;
-
-      writeChainSpec(chainSpecFullPathPlain, plainData);
-
-      // make genesis overrides first.
-      if (parachain.genesis)
-        await changeGenesisConfig(chainSpecFullPathPlain, parachain.genesis);
-
-      // clear auths
-      await clearAuthorities(chainSpecFullPathPlain);
-
-      // Chain spec customization logic
-      const addToSession = async (node: Node) => {
-        const key = getNodeKey(node, false);
-        await addAuthority(chainSpecFullPathPlain, node, key);
+    # there is officia polkadot on nixpkgs, but it has no local rococo wasm to run
+    polkadot = pkgs.stdenv.mkDerivation rec {
+      name = "polkadot";
+      pname = name;
+      src = builtins.fetchurl {
+        url = "https://github.com/paritytech/polkadot/releases/download/v1.0.0/polkadot";
+        sha256 = "sha256:0pl4c93xyf35hwr03c810ig1dbbyhg7jfzl3mb9j6r273siszh5s";
+      };
+      phases = ["installPhase"];
+      installPhase = ''
+        mkdir -p $out/bin
+        cp $src $out/bin/${name}
+        chmod +x $out/bin/${name}
+      '';
+    };
+    polkadot-parachain = pkgs.stdenv.mkDerivation rec {
+      name = "polkadot-parachain";
+      pname = name;
+      src = builtins.fetchurl {
+        url = "https://github.com/paritytech/cumulus/releases/download/v1.0.0/polkadot-parachain";
+        sha256 = "sha256:10i5vlfsxlb0y51bk69s9llfgnpwxkzrr8rvwhrgrjmjiwjpy6kn";
+      };
+      phases = ["installPhase"];
+      installPhase = ''
+        mkdir -p $out/bin
+        cp $src $out/bin/${name}
+        chmod +x $out/bin/${name}
+      '';
+    };
+    example-a = let
+      config = {
+        settings = {
+          timeout = 2000;
+        };
+        relaychain = {
+          command = "polkadot";
+          chain = "rococo-local";
+          nodes = [
+            {
+              name = "alice";
+              ws_port = 9944;
+              prometheus_port = 39944;
+            }
+            {name = "bob";}
+          ];
+          default_args = [
+            "--blocks-pruning=archive"
+            "--state-pruning=archive"
+            "--offchain-worker=always"
+            "--enable-offchain-indexing=true"
+            "--discover-local"
+          ];
+        };
+        parachains = [
+          {
+            id = 1002;
+            chain = "contracts-rococo-dev";
+            collator = {
+              name = "contracts";
+              command = "polkadot-parachain";
+              ws_port = 9988;
+              args = [
+                "-lparachain=debug"
+                "--discover-local"
+              ];
+            };
+          }
+        ];
+      };
+    in
+      pkgs.writeShellApplication rec {
+        name = "example-a";
+        runtimeInputs = [self'.packages.default polkadot polkadot-parachain];
+        text = ''
+          printf '${
+            builtins.toJSON config
+          }' > /tmp/zombie-${name}.json
+          zombienet spawn /tmp/zombie-${name}.json --provider native --dir /tmp/zombie-${name}
+        '';
+      };
+    example-b = let
+      config = {
+        settings = {
+          timeout = 2000;
+        };
+        relaychain = {
+          command = "polkadot";
+          chain = "westend-local";
+          nodes = [
+            {
+              name = "alice";
+              ws_port = 9954;
+              prometheus_port = 39954;
+            }
+            {name = "bob";}
+          ];
+          default_args = [
+            "--blocks-pruning=archive"
+            "--state-pruning=archive"
+            "--offchain-worker=always"
+            "--enable-offchain-indexing=true"
+            "--discover-local"
+          ];
+        };
+        parachains = [
+          {
+            id = 1002;
+            chain = "asset-hub-westend-dev";
+            collator = {
+              name = "asset-hub";
+              command = "polkadot-parachain";
+              ws_port = 9998;
+              args = [
+                "-lparachain=debug"
+                "--discover-local"
+              ];
+            };
+          }
+        ];
+      };
+    in
+      pkgs.writeShellApplication rec {
+        name = "example-b";
+        runtimeInputs = [self'.packages.default polkadot polkadot-parachain];
+        text = ''
+          printf '${
+            builtins.toJSON config
+          }' > /tmp/zombie-${name}.json
+          zombienet spawn /tmp/zombie-${name}.json --provider native --dir /tmp/zombie-${name}
+        '';
       };
 
-      const addToAura = async (node: Node) => {
-        await addAuraAuthority(
-          chainSpecFullPathPlain,
-          node.name,
-          node.accounts!,
-        );
-      };
-
-      const addAuthFn = specHaveSessionsKeys(plainData)
-        ? addToSession
-        : addToAura;
-
-      for (const node of parachain.collators) {
-        if (node.validator) {
-          await addAuthFn(node);
-          await addCollatorSelection(chainSpecFullPathPlain, node);
-          await addParaCustom(chainSpecFullPathPlain, node);
-        }
-      }
-
-      debug("creating chain spec raw");
-      // ensure needed file
-      if (parachain.chain)
-        fs.copyFileSync(
-          chainSpecFullPathPlain,
-          `${tmpDir}/${parachain.chain}-${parachain.name}-plain.json`,
-        );
-      // Generate the raw chain-spec logic
-
-      // Make sure we include the plain chain-spec
-      const chainSpecRawCommand = getChainSpecCmdRaw(
-        parachain.chainSpecCommand!,
-      );
-
-      await getChainSpecRaw(
-        namespace,
-        parachain.collators[0].image,
-        `${parachain.chain ? parachain.chain + "-" : ""}${
-          parachain.name
-        }-${relayChainName}`,
-        chainSpecRawCommand,
-        chainSpecFullPath,
-      );
-    } else {
-      console.log(
-        `\n\t\t 🚧 ${decorators.yellow(
-          `Chain Spec for paraId ${parachain.id} was set to a file in raw format, can't customize.`,
-        )} 🚧`,
-      );
-      await fs.promises.copyFile(chainSpecFullPathPlain, chainSpecFullPath);
-    }
-
-    try {
-      // ensure the correct para_id
-      const paraSpecRaw = readAndParseChainSpec(chainSpecFullPath);
-      if (paraSpecRaw.para_id) paraSpecRaw.para_id = parachain.id;
-      if (paraSpecRaw.paraId) paraSpecRaw.paraId = parachain.id;
-      writeChainSpec(chainSpecFullPath, paraSpecRaw);
-    } catch (e: any) {
-      if (e.code !== "ERR_FS_FILE_TOO_LARGE") throw e;
-
-      // can't customize para_id
-      console.log(
-        `\n\t\t 🚧 ${decorators.yellow(
-          `Chain Spec file ${chainSpecFullPath} is TOO LARGE to customize (more than 2G).`,
-        )} 🚧`,
-      );
-    }
-
-    // add spec file to copy to all collators.
-    parachain.specPath = chainSpecFullPath;
-  }
-
-  // state and wasm files are only needed:
-  // IFF the relaychain is NOT RAW or
-  // IFF the relaychain is raw and addToGenesis is false for the parachain
-  const stateAndWasmAreNeeded = !(
-    relayChainSpecIsRaw && parachain.addToGenesis
-  );
-  // check if we need to create files
-  if (
-    stateAndWasmAreNeeded &&
-    (parachain.genesisStateGenerator || parachain.genesisWasmGenerator)
-  ) {
-    const filesToCopyToNodes: fileMap[] = [];
-    if (parachain.cumulusBased && chainSpecFullPath)
-      filesToCopyToNodes.push({
-        localFilePath: chainSpecFullPath,
-        remoteFilePath: `${client.remoteDir}/${chainSpecFileName}`,
-      });
-
-    const commands = [];
-    if (parachain.genesisStateGenerator) {
-      const subcommand =
-        parachain.collators[0].substrateCliArgsVersion! >= 3
-          ? DEFAULT_GENESIS_HEAD_GENERATE_SUBCOMMAND
-          : DEFAULT_GENESIS_GENERATE_SUBCOMMAND;
-      let genesisStateGenerator = parachain.genesisStateGenerator
-        .replace("{{CLIENT_REMOTE_DIR}}", client.remoteDir as string)
-        .replace("{{GENESIS_GENERATE_SUBCOMMAND}}", subcommand);
-
-      // cumulus
-      if (parachain.cumulusBased) {
-        const chainSpecPathInNode =
-          client.providerName === "native"
-            ? chainSpecFullPath
-            : `${client.remoteDir}/${chainSpecFileName}`;
-
-        genesisStateGenerator = injectChainInCmd(
-          genesisStateGenerator,
-          chainSpecPathInNode!,
-        );
-      }
-
-      if (client.providerName === "native") {
-        genesisStateGenerator = await injectBasePathInCmd(
-          client,
-          parachain.id,
-          genesisStateGenerator,
-        );
-      }
-
-      commands.push(`${genesisStateGenerator}-${parachain.id}`);
-    }
-    if (parachain.genesisWasmGenerator) {
-      let genesisWasmGenerator = parachain.genesisWasmGenerator.replace(
-        "{{CLIENT_REMOTE_DIR}}",
-        client.remoteDir as string,
-      );
-      // cumulus
-      if (parachain.collators[0].zombieRole === ZombieRole.CumulusCollator) {
-        const chainSpecPathInNode =
-          client.providerName === "native"
-            ? chainSpecFullPath
-            : `${client.remoteDir}/${chainSpecFileName}`;
-
-        genesisWasmGenerator = injectChainInCmd(
-          genesisWasmGenerator,
-          chainSpecPathInNode!,
-        );
-      }
-      commands.push(`${genesisWasmGenerator}-${parachain.id}`);
-    }
-
-    // Native provider doesn't need to wait
-    if (client.providerName == "kubernetes")
-      commands.push(K8S_WAIT_UNTIL_SCRIPT_SUFIX);
-    else if (client.providerName == "podman")
-      commands.push(WAIT_UNTIL_SCRIPT_SUFIX);
-
-    const node: Node = {
-      name: getUniqueName("temp-collator"),
-      validator: false,
-      invulnerable: false,
-      image: parachain.collators[0].image || DEFAULT_COLLATOR_IMAGE,
-      fullCommand: commands.join(" && "),
-      chain: relayChainName,
-      bootnodes: [],
-      args: [],
-      env: [],
-      telemetryUrl: "",
-      overrides: [],
-      zombieRole: ZombieRole.Temp,
-      p2pPort: await getRandomPort(),
-      wsPort: await getRandomPort(),
-      rpcPort: await getRandomPort(),
-      prometheusPort: await getRandomPort(),
+    runtimeDeps = with pkgs;
+    # these are used behind the scenes
+    # can provide nix `devenv` with running podman based kubernetes as process/service
+      [bash coreutils procps findutils podman kubectl gcc-unwrapped]
+      ++ lib.optional stdenv.isLinux glibc.bin;
+    name = (builtins.fromJSON (builtins.readFile ./javascript/package.json)).name;
+    # reuse existing ignores to avoid rebuild on accidental changes
+    cleaned-javascript-src = pkgs.lib.cleanSourceWith {
+      src = pkgs.lib.cleanSource ./javascript;
+      filter =
+        pkgs.nix-gitignore.gitignoreFilterPure
+        (
+          name: type: (
+            # nix files are not used as part of build
+            (pkgs.lib.strings.hasSuffix ".nix" name == false)
+            &&
+            # not need to validate as part of nix build
+            (pkgs.lib.strings.hasSuffix ".husky" name == false)
+          )
+        )
+        [./.gitignore]
+        ./javascript;
+    };
+  in {
+    formatter = pkgs.alejandra;
+    devShells.default = pkgs.mkShell {
+      packages =
+        runtimeDeps
+        ++ [self'.packages.default]
+        # nix-tree is used to see raw bash/yaml/json files form nix
+        # for example `nix-tree .#example-bridge --derivation`
+        ++ [pkgs.nix-tree];
     };
 
-    const provider = Providers.get(client.providerName);
-    const podDef = await provider.genNodeDef(namespace, node);
-    const podName = podDef.metadata.name;
+    # example of running several relays and parachains in one command to allow bridge deb/debug
+    # https://github.com/paritytech/zombienet/discussions/645
+    process-compose.example-bridge = {
+      settings = {
+        log_location = "/tmp/zombie-example-bridge.log";
+        log_level = "debug";
+        processes = {
+          kusama = {
+            command = example-a;
+            log_location = "/tmp/zombie-example-a.log";
+            readiness_probe = {
+              initial_delay_seconds = 16;
+              period_seconds = 8;
+              failure_threshold = 32;
+              timeout_seconds = 2;
+              exec.command = ''
+                curl http://127.0.0.1:39944/metrics | grep polkadot_parachain_chain_api_block_headers_count | tr -s " " | cut --delimiter " " --fields=2 | tee /tmp/zombie-example-a/polkadot_parachain_chain_api_block_headers_count
+                exit $(( $(cat /tmp/zombie-example-a/polkadot_parachain_chain_api_block_headers_count) > 4 ? 0 : 1 ))
+              '';
+            };
+          };
+          polkadot = {
+            command = example-b;
+            log_location = "/tmp/zombie-example-b.log";
+            readiness_probe = {
+              initial_delay_seconds = 16;
+              period_seconds = 8;
+              failure_threshold = 32;
+              timeout_seconds = 2;
+              exec.command = ''
+                curl http://127.0.0.1:39954/metrics | grep polkadot_parachain_chain_api_block_headers_count | tr -s " " | cut --delimiter " " --fields=2 | tee /tmp/zombie-example-b/polkadot_parachain_chain_api_block_headers_count
+                exit $(( $(cat /tmp/zombie-example-b/polkadot_parachain_chain_api_block_headers_count) > 4 ? 0 : 1 ))
+              '';
+            };
+          };
+          # https://github.com/paritytech/parity-bridges-common/issues/2539
+        };
+      };
+    };
 
-    await client.spawnFromDef(podDef, filesToCopyToNodes);
+    packages =
+      rec {
+        # output is something like what npm 'pkg` does, but more sandboxed
+        default = pkgs.buildNpmPackage rec {
+          # generally Node should be same as in CI build config
+          # root hash (hash of hashes of each dependencies)
+          # this should be updated on each dependency change (use `prefetch-npm-deps` to get new hash)
+          inherit name npmDepsHash runtimeDeps;
+          pname = name;
+          src = cleaned-javascript-src;
+          npmBuildScript = "build";
+          npmBuildFlag = "--workspaces";
+          # just for safety of mac as it is used here often
+          nativeBuildInputs = with pkgs;
+            [
+              python3
+              nodePackages.node-gyp-build
+              nodePackages.node-gyp
+            ]
+            ++ pkgs.lib.optional pkgs.stdenv.isDarwin (with pkgs;
+              with darwin.apple_sdk.frameworks; [
+                Security
+                SystemConfiguration
+              ]);
 
-    if (client.providerName === "kubernetes") {
-      debug("waiting for artifacts been created in pod");
-      await (client as KubeClient).waitLog(
-        podName,
-        podName,
-        NODE_CONTAINER_WAIT_LOG,
-      );
-    }
+          # write logs only into isolated temp home, instead of any folder
+          npmFlags = ["--logs-dir=$HOME" "--verbose" "--legacy-peer-deps"];
+          makeCacheWritable = true;
+        };
 
-    if (parachain.genesisStateGenerator) {
-      await client.copyFileFromPod(
-        podDef.metadata.name,
-        `${client.remoteDir}/${GENESIS_STATE_FILENAME_WITH_ID}`,
-        stateLocalFilePath,
-      );
-    }
-
-    if (parachain.genesisWasmGenerator) {
-      await client.copyFileFromPod(
-        podDef.metadata.name,
-        `${client.remoteDir}/${GENESIS_WASM_FILENAME_WITH_ID}`,
-        wasmLocalFilePath,
-      );
-    }
-
-    await client.putLocalMagicFile(podName, podName);
-  }
-
-  if (parachain.genesisStatePath) {
-    fs.copyFileSync(parachain.genesisStatePath, stateLocalFilePath);
-  }
-
-  if (parachain.genesisWasmPath) {
-    fs.copyFileSync(parachain.genesisWasmPath, wasmLocalFilePath);
-  }
-
-  // add paths to para files
-  parachain.wasmPath = wasmLocalFilePath;
-  parachain.statePath = stateLocalFilePath;
-
-  return;
-}
-
-function getChainSpecCmdRaw(chainSpecCommand: string) {
-  // Default to the provided cmd, will work for custom generator.
-  let returnCmd = chainSpecCommand;
-  const parts = chainSpecCommand!
-    .split(" ")
-    .filter((part: string) => part.length);
-  if (parts.includes("build-spec") && !parts.includes("--chain")) {
-    returnCmd = `${chainSpecCommand} --chain {{chainName}}`;
-  }
-
-  return returnCmd;
-}
-
-// Inject the chain (e.g. --chain <chain path>) before the output file or the
-// shell redirection `>`.
-function injectChainInCmd(cmd: string, chain: string): string {
-  const parts = cmd.split(" ").filter(Boolean);
-  const l = parts.length;
-  const index = parts[l - 2] == ">" ? l - 2 : l - 1;
-  parts.splice(index, 0, `--chain ${chain}`);
-  return parts.join(" ");
-}
-
-// NOTE: This is only used in native provider since in k8s/podman the fs is always fresh
-// Inject the base-path  (e.g. --base-path <path> or -d <path>) IFF is not present
-async function injectBasePathInCmd(
-  client: Client,
-  parachainId: number,
-  cmd: string,
-): Promise<string> {
-  const parts = cmd.split(" ").filter(Boolean);
-  // IFF is present don't modify the cmd
-  if (parts.includes("-d") || parts.includes("--base-path")) return cmd;
-
-  // Check if the binary support the --base-path / -d flag
-  const helpCmd = `${parts[0]} ${parts[1]} --help`;
-  const helpText = (
-    await client.runCommand(["-c", helpCmd], { allowFail: true })
-  ).stdout;
-
-  if (!helpText.includes("--base-path")) return cmd; // flag not supported
-
-  // Inject a tmp base-path to prevent the use of a pre-existing un-purged data directory.
-  // See https://github.com/paritytech/zombienet/issues/1519
-  const exportGenesisStateCustomPath = `${client.tmpDir}/export-genesis-state/${parachainId}`;
-  await fs.promises.mkdir(exportGenesisStateCustomPath, {
-    recursive: true,
-  });
-
-  // inject just after the subcommand
-  debug(
-    `Injecting tmp dir for ${parts[0]} ${parts[1]} cmd, paraId ${parachainId}`,
-  );
-  parts.splice(2, 0, `-d ${exportGenesisStateCustomPath}`);
-  return parts.join(" ");
+        update = pkgs.writeShellApplication {
+          name = "update";
+          runtimeInputs = [pkgs.prefetch-npm-deps];
+          text = ''
+            prefetch-npm-deps ./javascript/package-lock.json
+          '';
+        };
+      }
+      // pkgs.lib.optionalAttrs (system == "x86_64-linux") {example = example-a;};
+  };
 }
